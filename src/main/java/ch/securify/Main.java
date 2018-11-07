@@ -19,6 +19,7 @@
 package ch.securify;
 
 import ch.securify.analysis.AbstractDataflow;
+import ch.securify.analysis.DSLAnalysis;
 import ch.securify.analysis.DataflowFactory;
 import ch.securify.decompiler.*;
 import ch.securify.decompiler.instructions.Instruction;
@@ -51,6 +52,9 @@ public class Main {
     private static class Args {
         @Parameter(names = {"-h", "-?", "--help"}, description = "usage", help = true)
         private boolean help;
+
+        @Parameter(names = {"--usedsl"}, description = "analyze contract with direct datalog queries, for now only works with hex files")
+        private boolean usedsl = false;
 
         @Parameter(names = {"-fs", "--filesol"}, description = "smart contract as a Solidity file")
         private String filesol;
@@ -116,7 +120,7 @@ public class Main {
             binFile.deleteOnExit();
             Files.write(Paths.get(binFile.getPath()), lines);
 
-            processHexFile(binFile.getPath(), null, livestatusfile);
+            processHexFile(binFile.getPath(), null, livestatusfile, false);
 
             byte[] fileContent = Files.readAllBytes(new File(e.getKey().split(":")[0]).toPath());
 
@@ -127,8 +131,7 @@ public class Main {
         return allContractResults;
     }
 
-
-    private static void processHexFile(String hexBinaryFile, String decompilationOutputFile, String livestatusfile) throws IOException, InterruptedException {
+    private static void processHexFile(String hexBinaryFile, String decompilationOutputFile, String livestatusfile, boolean checkWithDSL) throws IOException, InterruptedException {
         if (!new File(hexBinaryFile).exists()) {
             throw new IllegalArgumentException("File '" + hexBinaryFile + "' not found");
         }
@@ -161,10 +164,61 @@ public class Main {
             updateContractAnalysisStatus(livestatusfile);
         }
 
-        checkPatterns(instructions, livestatusfile);
+        if(checkWithDSL)
+            checkPatternsWithDSL(instructions, livestatusfile);
+        else
+            checkPatterns(instructions, livestatusfile);
         contractResult.finished = true;
         updateContractAnalysisStatus(livestatusfile);
 
+    }
+
+    private static void checkPatternsWithDSL(List<Instruction> instructions, String livestatusfile) {
+        boolean methodsDecompiled = (instructions.stream().anyMatch(instruction -> instruction instanceof _VirtualMethodHead));
+
+        DSLAnalysis analyzer;
+        try {
+            analyzer = new DSLAnalysis();
+        } catch (Exception e) {
+            e.printStackTrace();
+            return;
+        }
+
+        if (!methodsDecompiled) {
+            log.println("DSL: no methods found analysing whole body");
+            try {
+                analyzer.analyse(instructions);
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
+        } else {
+            // split instructions into methods and check them independently
+            for (List<Instruction> body : splitInstructionsIntoMethods(instructions)) {
+                log.println("DSL: Analyzing method with " + body.size() + " instructions:");
+                try {
+                    analyzer.analyse(body);
+                } catch (Exception e) {
+                    e.printStackTrace();
+                }
+            }
+        }
+
+
+
+            /*log.println("Computing global dataflow fixpoint over the entire contract...");
+            AbstractDataflow globalDataflow = DataflowFactory.getDataflow(instructions);
+            for (AbstractPattern pattern : patterns) {
+                if (!(pattern instanceof AbstractContractPattern))
+                    continue;
+
+                try {
+                    checkInstructions(instructions, instructions, pattern, globalDataflow, livestatusfile);
+                } catch (Exception e) {
+                    e.printStackTrace();
+                }
+            }
+            globalDataflow.dispose();
+        }*/
     }
 
     public static void main(String[] rawrgs) throws IOException, InterruptedException {
@@ -216,7 +270,7 @@ public class Main {
         }
 
         if (args.filehex != null) {
-            processHexFile(args.filehex, args.decompoutputfile, livestatusfile);
+            processHexFile(args.filehex, args.decompoutputfile, livestatusfile, args.usedsl);
         } else if (args.filejsonlist != null) {
             log.println("filejsonlist: " + args.filejsonlist);
             if (!new File(args.filejsonlist).exists()) {
