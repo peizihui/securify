@@ -5,3 +5,6 @@ out/
 securify.ipr
 securify.iws
 scripts/__pycache__
+
+#always possible to recreate the file by running DSLPatternsCompiler.java
+smt_files/CompiledPatterns.dl
